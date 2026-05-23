@@ -27,18 +27,18 @@ from astrbot.core.agent.message import TextPart
 
 PLUGIN_ID = "astrbot_plugin_gif_vision_helper"
 PLUGIN_VERSION = "0.7.2"
-PLUGIN_DESC = "? QQ GIF ?????????,????????????????"
+PLUGIN_DESC = "\u5c06 QQ GIF \u52a8\u56fe\u62c6\u6210\u591a\u5e27\u9759\u6001\u56fe\uff0c\u8ba9\u591a\u6a21\u6001\u6a21\u578b\u66f4\u7a33\u5b9a\u5730\u7406\u89e3\u52a8\u6001\u5185\u5bb9"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_gif_vision_helper"
 
 MB = 1024 * 1024
 DEFAULT_MULTI_HINT = (
-    "[????] ??????? {gif_count} ? GIF ??,"
-    "???????? {frame_count} ?????"
-    "????????????????????,??????????"
+    "[\u7cfb\u7edf\u63d0\u793a] \u672c\u6b21\u7528\u6237\u53d1\u9001\u4e86 {gif_count} \u4e2a GIF \u52a8\u56fe\uff0c"
+    "\u63d2\u4ef6\u5df2\u5c06\u5176\u62bd\u5e27\u4e3a {frame_count} \u5f20\u9759\u6001\u56fe\u3002"
+    "\u8bf7\u7efc\u5408\u6240\u6709\u5e27\u7406\u89e3\u5b8c\u6574\u52a8\u4f5c\u3001\u8868\u60c5\u548c\u573a\u666f\u53d8\u5316\uff0c\u4e0d\u8981\u53ea\u4f9d\u636e\u7b2c\u4e00\u5f20\u56fe\u3002"
 )
 DEFAULT_SINGLE_HINT = (
-    "[????] ??????? GIF ??,??????? 1 ?????"
-    "???????????,???????????"
+    "[\u7cfb\u7edf\u63d0\u793a] \u672c\u6b21\u7528\u6237\u53d1\u9001\u4e86 GIF \u52a8\u56fe\uff0c\u4f46\u5f53\u524d\u4ec5\u4fdd\u7559\u4e86 1 \u5f20\u9759\u6001\u56fe\u3002"
+    "\u53ef\u80fd\u4f1a\u4e22\u5931\u90e8\u5206\u52a8\u4f5c\u4fe1\u606f\uff0c\u8bf7\u7ed3\u5408\u4e0a\u4e0b\u6587\u8c28\u614e\u5224\u65ad\u3002"
 )
 
 
