@@ -1,5 +1,11 @@
 ﻿# 更新日志
 
+## 0.7.5 - 2026-05-24
+
+- 新增 `max_sampled_frames` 配置项，用于控制单个 GIF 最多展开帧数
+- 抽样帧数字段不再被内部固定压到 12 帧，可按 `max_sampled_frames` 上限生效
+- 修复大文件降档时 `minimum_frames_after_penalty` 可能反向增加抽帧数的问题
+
 ## 0.7.4 - 2026-05-24
 
 - 将插件唯一名改为 `astrbot_plugin_gif_frame_vision`，避免和上游原插件更新冲突

@@ -34,11 +34,13 @@ from astrbot.core.utils.io import download_image_by_url
 
 
 PLUGIN_ID = "astrbot_plugin_gif_frame_vision"
-PLUGIN_VERSION = "0.7.4"
+PLUGIN_VERSION = "0.7.5"
 PLUGIN_DESC = "\u5c06 QQ GIF \u52a8\u56fe\u62c6\u6210\u591a\u5e27\u9759\u6001\u56fe\uff0c\u8ba9\u591a\u6a21\u6001\u6a21\u578b\u66f4\u7a33\u5b9a\u5730\u7406\u89e3\u52a8\u6001\u5185\u5bb9"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_gif_frame_vision"
 
 MB = 1024 * 1024
+DEFAULT_MAX_SAMPLED_FRAMES = 32
+ABSOLUTE_MAX_SAMPLED_FRAMES = 120
 DEFAULT_MULTI_HINT = (
     "[\u7cfb\u7edf\u63d0\u793a] \u672c\u6b21\u7528\u6237\u53d1\u9001\u4e86 {gif_count} \u4e2a GIF \u52a8\u56fe\uff0c"
     "\u63d2\u4ef6\u5df2\u5c06\u5176\u62bd\u5e27\u4e3a {frame_count} \u5f20\u9759\u6001\u56fe\u3002"
@@ -54,6 +56,7 @@ DEFAULT_SINGLE_HINT = (
 class SamplingPolicy:
     max_side: int
     jpeg_quality: int
+    max_sampled_frames: int
     frames_le_4: int
     frames_le_8: int
     frames_le_16: int
@@ -183,6 +186,12 @@ class GifFrameVision(Star):
         sampling_conf = self._config_section("sampling_policy")
         hint_conf = self._config_section("hint_policy")
         cleanup_conf = self._config_section("cleanup_policy")
+        max_sampled_frames = self._read_int(
+            sampling_conf.get("max_sampled_frames"),
+            DEFAULT_MAX_SAMPLED_FRAMES,
+            minimum=1,
+            maximum=ABSOLUTE_MAX_SAMPLED_FRAMES,
+        )
 
         sampling = SamplingPolicy(
             max_side=self._read_int(
@@ -197,35 +206,36 @@ class GifFrameVision(Star):
                 minimum=30,
                 maximum=100,
             ),
+            max_sampled_frames=max_sampled_frames,
             frames_le_4=self._read_int(
                 sampling_conf.get("frames_when_total_le_4"),
                 3,
                 minimum=1,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
             frames_le_8=self._read_int(
                 sampling_conf.get("frames_when_total_le_8"),
                 4,
                 minimum=1,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
             frames_le_16=self._read_int(
                 sampling_conf.get("frames_when_total_le_16"),
                 5,
                 minimum=1,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
             frames_gt_16=self._read_int(
                 sampling_conf.get("frames_when_total_gt_16"),
                 6,
                 minimum=1,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
             min_frames_after_penalty=self._read_int(
                 sampling_conf.get("minimum_frames_after_penalty"),
                 3,
                 minimum=1,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
             threshold_mb_1=self._read_float(
                 sampling_conf.get("size_penalty_threshold_mb_1"),
@@ -243,13 +253,13 @@ class GifFrameVision(Star):
                 sampling_conf.get("size_penalty_step_1"),
                 1,
                 minimum=0,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
             penalty_2=self._read_int(
                 sampling_conf.get("size_penalty_step_2"),
                 2,
                 minimum=0,
-                maximum=12,
+                maximum=max_sampled_frames,
             ),
         )
 
@@ -632,13 +642,14 @@ class GifFrameVision(Star):
             policy.penalty_1,
             max(policy.penalty_1, policy.penalty_2),
         )
+        min_after_penalty = min(policy.min_frames_after_penalty, frames)
 
         if file_size > second_threshold:
-            frames = max(policy.min_frames_after_penalty, frames - second_penalty)
+            frames = max(min_after_penalty, frames - second_penalty)
         elif file_size > first_threshold:
-            frames = max(policy.min_frames_after_penalty, frames - first_penalty)
+            frames = max(min_after_penalty, frames - first_penalty)
 
-        return max(1, min(frames, total_frames))
+        return max(1, min(frames, total_frames, policy.max_sampled_frames))
 
     @staticmethod
     def _sample_indices(n_frames: int, target: int) -> list[int]:
