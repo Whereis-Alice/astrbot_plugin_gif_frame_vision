@@ -1,5 +1,5 @@
 """
-AstrBot plugin: GIF Vision Helper.
+AstrBot plugin: GIF Frame Vision.
 
 Convert local GIF attachments into sampled JPEG frames before a vision model
 receives them, so the model can reason about motion instead of a single still.
@@ -8,27 +8,35 @@ receives them, so the model can reason about motion instead of a single still.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 
 from PIL import Image, UnidentifiedImageError
 from PIL.Image import DecompressionBombError
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import Image as AstrImage
+from astrbot.api.message_components import Reply
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 from astrbot.core.agent.message import TextPart
+from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
+from astrbot.core.utils.io import download_image_by_url
 
 
-PLUGIN_ID = "astrbot_plugin_gif_vision_helper"
-PLUGIN_VERSION = "0.7.2"
+PLUGIN_ID = "astrbot_plugin_gif_frame_vision"
+PLUGIN_VERSION = "0.7.4"
 PLUGIN_DESC = "\u5c06 QQ GIF \u52a8\u56fe\u62c6\u6210\u591a\u5e27\u9759\u6001\u56fe\uff0c\u8ba9\u591a\u6a21\u6001\u6a21\u578b\u66f4\u7a33\u5b9a\u5730\u7406\u89e3\u52a8\u6001\u5185\u5bb9"
-PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_gif_vision_helper"
+PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_gif_frame_vision"
 
 MB = 1024 * 1024
 DEFAULT_MULTI_HINT = (
@@ -73,8 +81,15 @@ class PluginSettings:
     hint: HintPolicy
 
 
+@dataclass(frozen=True)
+class GifCandidate:
+    index: int
+    path: Path
+    label: str
+
+
 @register(PLUGIN_ID, "YanL", PLUGIN_DESC, PLUGIN_VERSION, PLUGIN_REPO)
-class GifVisionHelper(Star):
+class GifFrameVision(Star):
     """Turn GIF images into frame sequences for multimodal requests."""
 
     def __init__(
@@ -320,11 +335,35 @@ class GifVisionHelper(Star):
                     self._temp_files.discard(path)
 
     @staticmethod
+    def _track_temp_file(event: AstrMessageEvent, path: Path) -> None:
+        tracker = getattr(event, "track_temporary_local_file", None)
+        if callable(tracker):
+            tracker(str(path))
+
+    @staticmethod
+    def _make_temp_path(suffix: str) -> Path:
+        temp_root = Path(get_astrbot_temp_path())
+        temp_root.mkdir(parents=True, exist_ok=True)
+        return temp_root / f"{PLUGIN_ID}_{uuid.uuid4().hex}{suffix}"
+
+    @staticmethod
+    def _is_under_directory(path: Path, directory: Path) -> bool:
+        try:
+            path.resolve().relative_to(directory.resolve())
+        except ValueError:
+            return False
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
     def _resolve_local_image_path(image_ref: str) -> Path | None:
         if image_ref.startswith(("http://", "https://", "data:", "base64://")):
             return None
 
-        if image_ref.startswith("file://"):
+        if image_ref.startswith("file:///"):
+            image_ref = unquote(image_ref[8:])
+        elif image_ref.startswith("file://"):
             image_ref = unquote(image_ref[7:]).lstrip("/")
 
         path = Path(image_ref)
@@ -341,6 +380,237 @@ class GifVisionHelper(Star):
             return False
 
         return header in (b"GIF87a", b"GIF89a")
+
+    @staticmethod
+    def _is_gif_header(header: bytes | None) -> bool:
+        return header in (b"GIF87a", b"GIF89a")
+
+    @staticmethod
+    def _peek_remote_header(image_ref: str) -> bytes | None:
+        request = Request(
+            image_ref,
+            headers={
+                "Range": "bytes=0-5",
+                "User-Agent": f"{PLUGIN_ID}/{PLUGIN_VERSION}",
+            },
+        )
+        try:
+            with urlopen(request, timeout=10) as response:
+                return response.read(6)
+        except Exception as exc:
+            logger.debug("[%s] failed to peek remote image header %s: %s", PLUGIN_ID, image_ref, exc)
+            return None
+
+    def _write_temp_gif_bytes(self, image_bytes: bytes) -> Path | None:
+        if not self._is_gif_header(image_bytes[:6]):
+            return None
+
+        output_path = self._make_temp_path(".gif")
+        try:
+            output_path.write_bytes(image_bytes)
+        except OSError as exc:
+            logger.warning("[%s] failed to write temp gif: %s", PLUGIN_ID, exc)
+            return None
+
+        self._register_temp_file(output_path)
+        return output_path
+
+    def _decode_base64_gif(self, image_ref: str) -> Path | None:
+        payload = image_ref
+        if image_ref.startswith("base64://"):
+            payload = image_ref.removeprefix("base64://")
+        elif image_ref.startswith("data:"):
+            meta, separator, data = image_ref.partition(",")
+            if not separator or ";base64" not in meta.lower():
+                return None
+            payload = data
+
+        try:
+            image_bytes = base64.b64decode("".join(payload.split()), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            logger.warning("[%s] failed to decode base64 image: %s", PLUGIN_ID, exc)
+            return None
+
+        return self._write_temp_gif_bytes(image_bytes)
+
+    async def _resolve_gif_source_path(self, image_ref: str) -> Path | None:
+        local_path = self._resolve_local_image_path(image_ref)
+        if local_path:
+            return local_path if self._is_gif_file(local_path) else None
+
+        if image_ref.startswith(("base64://", "data:")):
+            return self._decode_base64_gif(image_ref)
+
+        if image_ref.startswith(("http://", "https://")):
+            header = await asyncio.to_thread(self._peek_remote_header, image_ref)
+            if header is not None and not self._is_gif_header(header):
+                return None
+            if header is None and Path(urlparse(image_ref).path).suffix.lower() != ".gif":
+                return None
+
+            output_path = self._make_temp_path(".gif")
+            try:
+                downloaded = Path(await download_image_by_url(image_ref, path=str(output_path)))
+            except Exception as exc:
+                logger.warning("[%s] failed to download gif candidate %s: %s", PLUGIN_ID, image_ref, exc)
+                return None
+
+            if not self._is_gif_file(downloaded):
+                try:
+                    downloaded.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return None
+
+            self._register_temp_file(downloaded)
+            return downloaded
+
+        return None
+
+    @staticmethod
+    def _read_content_part_text(part: Any) -> str | None:
+        if isinstance(part, TextPart):
+            return part.text
+        if isinstance(part, dict) and part.get("type") == "text":
+            text = part.get("text")
+            return text if isinstance(text, str) else None
+        return None
+
+    @staticmethod
+    def _parse_image_attachment_marker(text: str) -> tuple[str, bool] | None:
+        prefixes = (
+            ("[Image Attachment: path ", False),
+            ("[Image Attachment in quoted message: path ", True),
+        )
+        for prefix, quoted in prefixes:
+            if text.startswith(prefix) and text.endswith("]"):
+                return text[len(prefix) : -1].strip(), quoted
+        return None
+
+    def _collect_image_marker_gif_candidates(
+        self,
+        req: ProviderRequest,
+        image_count: int,
+    ) -> dict[int, GifCandidate]:
+        candidates: dict[int, GifCandidate] = {}
+        marker_index = 0
+        for part in getattr(req, "extra_user_content_parts", []):
+            text = self._read_content_part_text(part)
+            if not text:
+                continue
+            parsed = self._parse_image_attachment_marker(text)
+            if not parsed:
+                continue
+
+            path_ref, _ = parsed
+            local_path = self._resolve_local_image_path(path_ref)
+            if local_path and self._is_gif_file(local_path) and marker_index < image_count:
+                candidates[marker_index] = GifCandidate(
+                    index=marker_index,
+                    path=local_path,
+                    label=f"attachment marker image {marker_index + 1}",
+                )
+            marker_index += 1
+        return candidates
+
+    async def _collect_request_gif_candidates(
+        self,
+        image_urls: list[Any],
+    ) -> dict[int, GifCandidate]:
+        candidates: dict[int, GifCandidate] = {}
+        for index, image_ref in enumerate(image_urls):
+            if not isinstance(image_ref, str):
+                continue
+            path = await self._resolve_gif_source_path(image_ref)
+            if path and self._is_gif_file(path):
+                candidates[index] = GifCandidate(
+                    index=index,
+                    path=path,
+                    label=f"request image {index + 1}",
+                )
+        return candidates
+
+    async def _resolve_image_component_path(self, component: AstrImage) -> Path | None:
+        saw_source_ref = False
+        for attr in ("path", "file", "url"):
+            value = getattr(component, attr, None)
+            if not isinstance(value, str) or not value:
+                continue
+            saw_source_ref = True
+            path = await self._resolve_gif_source_path(value)
+            if path:
+                return path
+
+        if saw_source_ref:
+            return None
+
+        converter = getattr(component, "convert_to_file_path", None)
+        if callable(converter):
+            try:
+                resolved = await converter()
+            except Exception as exc:
+                logger.warning("[%s] failed to resolve image component: %s", PLUGIN_ID, exc)
+                return None
+            local_path = self._resolve_local_image_path(str(resolved))
+            if local_path and self._is_gif_file(local_path):
+                if self._is_under_directory(local_path, Path(get_astrbot_temp_path())):
+                    self._register_temp_file(local_path)
+                return local_path
+
+        return None
+
+    async def _collect_event_gif_candidates(
+        self,
+        event: AstrMessageEvent,
+        image_count: int,
+    ) -> dict[int, GifCandidate]:
+        candidates: dict[int, GifCandidate] = {}
+        direct_slots: list[GifCandidate | None] = []
+        quoted_slots: list[GifCandidate | None] = []
+
+        for comp in event.get_messages():
+            if isinstance(comp, AstrImage):
+                path = await self._resolve_image_component_path(comp)
+                direct_index = len(direct_slots)
+                if path and self._is_gif_file(path):
+                    direct_slots.append(
+                        GifCandidate(
+                            index=direct_index,
+                            path=path,
+                            label=f"event image {direct_index + 1}",
+                        ),
+                    )
+                else:
+                    direct_slots.append(None)
+                continue
+
+            if isinstance(comp, Reply) and comp.chain:
+                for reply_comp in comp.chain:
+                    if not isinstance(reply_comp, AstrImage):
+                        continue
+                    path = await self._resolve_image_component_path(reply_comp)
+                    quoted_index = len(quoted_slots)
+                    if path and self._is_gif_file(path):
+                        quoted_slots.append(
+                            GifCandidate(
+                                index=quoted_index,
+                                path=path,
+                                label=f"quoted event image {quoted_index + 1}",
+                            ),
+                        )
+                    else:
+                        quoted_slots.append(None)
+
+        for index, candidate in enumerate(direct_slots + quoted_slots):
+            if candidate is None or index >= image_count:
+                continue
+            candidates[index] = GifCandidate(
+                index=index,
+                path=candidate.path,
+                label=candidate.label,
+            )
+
+        return candidates
 
     def _decide_frame_count(self, total_frames: int, file_size: int, policy: SamplingPolicy) -> int:
         if total_frames <= 1:
@@ -425,17 +695,15 @@ class GifVisionHelper(Star):
 
                 if total_frames <= 1:
                     first_frame = self._resize_frame(image.convert("RGB"), policy.max_side)
-                    first_frame.save(main_path, format="JPEG", quality=policy.jpeg_quality)
-                    return [main_path], 1
+                    output_path = self._make_temp_path("_f0.jpg")
+                    first_frame.save(output_path, format="JPEG", quality=policy.jpeg_quality)
+                    self._register_temp_file(output_path)
+                    return [output_path], 1
 
                 target = self._decide_frame_count(total_frames, file_size, policy)
                 indices = self._sample_indices(total_frames, target)
                 if not indices:
                     return [], 0
-
-                parent = main_path.parent
-                stem = main_path.stem
-                first_frame: Image.Image | None = None
 
                 for frame_index in indices:
                     try:
@@ -445,23 +713,11 @@ class GifVisionHelper(Star):
                         continue
 
                     frame = self._resize_frame(frame, policy.max_side)
-                    if first_frame is None:
-                        first_frame = frame.copy()
-                        continue
-                    else:
-                        output_path = parent / f"{stem}_f{frame_index}.jpg"
-
+                    output_path = self._make_temp_path(f"_f{frame_index}.jpg")
                     frame.save(output_path, format="JPEG", quality=policy.jpeg_quality)
                     paths.append(output_path)
+                    self._register_temp_file(output_path)
 
-                    if output_path != main_path:
-                        self._register_temp_file(output_path)
-
-                if first_frame is None:
-                    return [], 0
-
-                first_frame.save(main_path, format="JPEG", quality=policy.jpeg_quality)
-                paths.insert(0, main_path)
                 return (paths, len(paths)) if paths else ([], 0)
 
         except DecompressionBombError as exc:
@@ -536,7 +792,6 @@ class GifVisionHelper(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
-        _ = event
         settings = self._load_settings()
         if not settings.enabled:
             return
@@ -545,13 +800,15 @@ class GifVisionHelper(Star):
         if not image_urls or not isinstance(image_urls, list):
             return
 
-        gif_candidates: list[tuple[int, Path]] = []
-        for index, image_ref in enumerate(image_urls):
-            if not isinstance(image_ref, str):
-                continue
-            local_path = self._resolve_local_image_path(image_ref)
-            if local_path and self._is_gif_file(local_path):
-                gif_candidates.append((index, local_path))
+        request_candidates = await self._collect_request_gif_candidates(image_urls)
+        marker_candidates = self._collect_image_marker_gif_candidates(req, len(image_urls))
+        event_candidates = await self._collect_event_gif_candidates(event, len(image_urls))
+
+        gif_candidates = {
+            **event_candidates,
+            **marker_candidates,
+            **request_candidates,
+        }
 
         if not gif_candidates:
             return
@@ -562,16 +819,23 @@ class GifVisionHelper(Star):
         replacements: dict[int, list[str]] = {}
         total_sampled_frames = 0
 
-        for index, gif_path in gif_candidates:
-            logger.info("[%s] processing gif attachment: %s", PLUGIN_ID, gif_path)
+        for index, candidate in sorted(gif_candidates.items()):
+            logger.info(
+                "[%s] processing gif attachment from %s: %s",
+                PLUGIN_ID,
+                candidate.label,
+                candidate.path,
+            )
             frame_paths, frame_count = await asyncio.to_thread(
                 self._convert_gif_to_multi_jpeg,
-                gif_path,
+                candidate.path,
                 settings.sampling,
             )
             if not frame_paths or frame_count <= 0:
                 continue
 
+            for path in frame_paths:
+                self._track_temp_file(event, path)
             replacements[index] = [str(path) for path in frame_paths]
             total_sampled_frames += frame_count
 

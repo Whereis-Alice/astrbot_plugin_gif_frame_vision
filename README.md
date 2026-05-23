@@ -1,21 +1,23 @@
-﻿# GIF Vision Helper
+﻿# GIF Frame Vision
 
 这是一个 AstrBot 插件，用于在视觉模型收到请求前，将本地 GIF 动图抽样为多帧 JPEG 静态图，帮助模型更准确地理解动作、表情和场景变化。
 
 ## 插件来源
 
 - 上游原仓库：[Yanlyn/astrbot_plugin_gif_vision_helper](https://github.com/Yanlyn/astrbot_plugin_gif_vision_helper)
-- 当前维护分支：[Whereis-Alice/astrbot_plugin_gif_vision_helper](https://github.com/Whereis-Alice/astrbot_plugin_gif_vision_helper)
+- 当前维护分支：[Whereis-Alice/astrbot_plugin_gif_frame_vision](https://github.com/Whereis-Alice/astrbot_plugin_gif_frame_vision)
 
 这个 fork 以原作者实现为基础，补充了可配置策略、提示词策略和一些运行时修复，方便后续直接通过 Git 更新。
 
 ## 功能特性
 
-- 通过文件头识别本地 GIF，不依赖扩展名
+- 通过文件头识别 GIF，不依赖扩展名
+- 支持本地路径、`file://`、`http(s)`、`base64://` 和 `data:image/gif;base64,...` 图片来源
+- 当 AstrBot 先将 GIF 压缩成静态图时，会从原始消息链回溯源 GIF 再抽帧
 - 将 GIF 抽样为多帧 JPEG，并重写 `image_urls`
 - 支持在一次请求中同时处理多个 GIF
 - 支持将 GIF 说明注入到 `extra_user_content`、`prompt` 或 `system_prompt`
-- 自动清理插件生成的临时抽帧文件
+- 抽帧输出到临时 JPEG，不覆盖原始 GIF，并自动清理插件生成的临时文件
 
 ## 配置说明
 
@@ -35,7 +37,7 @@
 
 ## 安装方式
 
-1. 将本插件目录放到 `data/plugins/astrbot_plugin_gif_vision_helper`
+1. 将本插件目录放到 `data/plugins/astrbot_plugin_gif_frame_vision`
 2. 通过 `pip install -r requirements.txt` 安装依赖
 3. 重载插件或重启 AstrBot
 4. 在插件配置面板中按需调整策略

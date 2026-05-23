@@ -2,7 +2,7 @@
   "enabled": {
     "type": "bool",
     "default": true,
-    "description": "\u542f\u7528 GIF Vision Helper",
+    "description": "\u542f\u7528 GIF Frame Vision",
     "hint": "\u5173\u95ed\u540e\u5c06\u5b8c\u5168\u8df3\u8fc7 GIF \u62bd\u5e27\u548c\u63d0\u793a\u6ce8\u5165\u3002"
   },
   "sampling_policy": {

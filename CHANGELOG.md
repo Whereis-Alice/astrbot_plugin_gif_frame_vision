@@ -1,5 +1,18 @@
 ﻿# 更新日志
 
+## 0.7.4 - 2026-05-24
+
+- 将插件唯一名改为 `astrbot_plugin_gif_frame_vision`，避免和上游原插件更新冲突
+- 将展示名改为 `GIF Frame Vision`，并同步 README、配置面板文案和仓库地址
+- 安装目录建议同步改为 `data/plugins/astrbot_plugin_gif_frame_vision`
+
+## 0.7.3 - 2026-05-24
+
+- 修复部分 GIF 在 AstrBot 预压缩后变成静态图，导致插件无法识别动图的问题
+- 新增从原始消息链回溯 GIF 源图的兜底识别逻辑
+- 新增 `base64://`、`data:image/gif;base64,...` 和远端图片 URL 的 GIF 识别支持
+- 抽帧改为始终输出到插件临时 JPEG，避免覆盖原始 GIF 或平台缓存文件
+
 ## 0.7.2 - 2026-05-23
 
 - 将 `README.md`、`CHANGELOG.md` 和插件元数据改回中文
