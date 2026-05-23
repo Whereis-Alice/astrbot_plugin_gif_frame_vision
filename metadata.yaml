@@ -1,8 +1,8 @@
 name: astrbot_plugin_gif_vision_helper
 display_name: GIF Vision Helper
-version: 0.7.1
+version: 0.7.2
 author: YanL, Whereis-Alice
-desc: GIF frame sampling helper for multimodal vision requests
-short_desc: GIF frame sampling for vision models
+desc: ? GIF ????????,?????????
+short_desc: GIF ?????????
 astrbot_version: ">=4.16,<5"
 repo: https://github.com/Whereis-Alice/astrbot_plugin_gif_vision_helper

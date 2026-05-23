@@ -26,7 +26,7 @@ from astrbot.core.agent.message import TextPart
 
 
 PLUGIN_ID = "astrbot_plugin_gif_vision_helper"
-PLUGIN_VERSION = "0.7.1"
+PLUGIN_VERSION = "0.7.2"
 PLUGIN_DESC = "? QQ GIF ?????????,????????????????"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_gif_vision_helper"
 
