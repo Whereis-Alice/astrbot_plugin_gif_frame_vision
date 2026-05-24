@@ -28,13 +28,13 @@ from astrbot.api.message_components import Image as AstrImage
 from astrbot.api.message_components import Reply
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
-from astrbot.core.agent.message import TextPart
+from astrbot.core.agent.message import ImageURLPart, TextPart
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 from astrbot.core.utils.io import download_image_by_url
 
 
 PLUGIN_ID = "astrbot_plugin_gif_frame_vision"
-PLUGIN_VERSION = "0.7.5"
+PLUGIN_VERSION = "0.7.6"
 PLUGIN_DESC = "\u5c06 QQ GIF \u52a8\u56fe\u62c6\u6210\u591a\u5e27\u9759\u6001\u56fe\uff0c\u8ba9\u591a\u6a21\u6001\u6a21\u578b\u66f4\u7a33\u5b9a\u5730\u7406\u89e3\u52a8\u6001\u5185\u5bb9"
 PLUGIN_REPO = "https://github.com/Whereis-Alice/astrbot_plugin_gif_frame_vision"
 
@@ -50,6 +50,7 @@ DEFAULT_SINGLE_HINT = (
     "[\u7cfb\u7edf\u63d0\u793a] \u672c\u6b21\u7528\u6237\u53d1\u9001\u4e86 GIF \u52a8\u56fe\uff0c\u4f46\u5f53\u524d\u4ec5\u4fdd\u7559\u4e86 1 \u5f20\u9759\u6001\u56fe\u3002"
     "\u53ef\u80fd\u4f1a\u4e22\u5931\u90e8\u5206\u52a8\u4f5c\u4fe1\u606f\uff0c\u8bf7\u7ed3\u5408\u4e0a\u4e0b\u6587\u8c28\u614e\u5224\u65ad\u3002"
 )
+TEMP_FRAME_PLACEHOLDER = "[GIF sampled frames]"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class HintPolicy:
 class PluginSettings:
     enabled: bool
     cleanup_ttl_hours: int
+    persist_sampled_frames_to_history: bool
     sampling: SamplingPolicy
     hint: HintPolicy
 
@@ -186,6 +188,7 @@ class GifFrameVision(Star):
         sampling_conf = self._config_section("sampling_policy")
         hint_conf = self._config_section("hint_policy")
         cleanup_conf = self._config_section("cleanup_policy")
+        history_conf = self._config_section("history_policy")
         max_sampled_frames = self._read_int(
             sampling_conf.get("max_sampled_frames"),
             DEFAULT_MAX_SAMPLED_FRAMES,
@@ -290,6 +293,10 @@ class GifFrameVision(Star):
                 24,
                 minimum=1,
                 maximum=24 * 30,
+            ),
+            persist_sampled_frames_to_history=self._read_bool(
+                history_conf.get("persist_sampled_frames_to_history"),
+                False,
             ),
             sampling=sampling,
             hint=hint,
@@ -801,6 +808,40 @@ class GifFrameVision(Star):
         if not self._has_hint_part(req, hint_text):
             req.extra_user_content_parts.append(TextPart(text=hint_text).mark_as_temp())
 
+    @staticmethod
+    def _make_temp_image_part(path: str) -> ImageURLPart | None:
+        try:
+            image_data = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+        except OSError as exc:
+            logger.warning("[%s] failed to read sampled frame %s: %s", PLUGIN_ID, path, exc)
+            return None
+        return ImageURLPart(
+            image_url=ImageURLPart.ImageURL(
+                url=f"data:image/jpeg;base64,{image_data}",
+            ),
+        ).mark_as_temp()
+
+    def _append_temp_frame_parts(self, req: ProviderRequest, paths: list[str]) -> int:
+        if not paths:
+            return 0
+        has_extra_text = any(
+            isinstance(part, TextPart)
+            or (isinstance(part, dict) and part.get("type") == "text")
+            for part in getattr(req, "extra_user_content_parts", [])
+        )
+        if not (req.prompt and req.prompt.strip()) and not has_extra_text:
+            req.extra_user_content_parts.append(
+                TextPart(text=TEMP_FRAME_PLACEHOLDER).mark_as_temp(),
+            )
+        appended = 0
+        for path in paths:
+            part = self._make_temp_image_part(path)
+            if part is None:
+                continue
+            req.extra_user_content_parts.append(part)
+            appended += 1
+        return appended
+
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         settings = self._load_settings()
@@ -854,10 +895,15 @@ class GifFrameVision(Star):
             return
 
         new_urls: list[str] = []
+        temporary_frame_paths: list[str] = []
+        temp_frame_count = 0
         for index, image_ref in enumerate(image_urls):
             replacement = replacements.get(index)
             if replacement:
-                new_urls.extend(replacement)
+                if settings.persist_sampled_frames_to_history:
+                    new_urls.extend(replacement)
+                else:
+                    temporary_frame_paths.extend(replacement)
             else:
                 new_urls.append(image_ref if isinstance(image_ref, str) else str(image_ref))
 
@@ -871,10 +917,14 @@ class GifFrameVision(Star):
             )
             self._apply_hint(req, settings.hint, hint_text)
 
+        temp_frame_count = self._append_temp_frame_parts(req, temporary_frame_paths)
+
         logger.info(
-            "[%s] expanded %s GIF attachment(s): image_urls %s -> %s",
+            "[%s] expanded %s GIF attachment(s): image_urls %s -> %s, sampled_frames %s%s",
             PLUGIN_ID,
             len(replacements),
             len(image_urls),
             len(new_urls),
+            total_sampled_frames,
+            "" if settings.persist_sampled_frames_to_history else f", temporary_frames {temp_frame_count}",
         )

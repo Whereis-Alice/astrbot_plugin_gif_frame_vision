@@ -14,17 +14,18 @@
 - 通过文件头识别 GIF，不依赖扩展名
 - 支持本地路径、`file://`、`http(s)`、`base64://` 和 `data:image/gif;base64,...` 图片来源
 - 当 AstrBot 先将 GIF 压缩成静态图时，会从原始消息链回溯源 GIF 再抽帧
-- 将 GIF 抽样为多帧 JPEG，并重写 `image_urls`
+- 将 GIF 抽样为多帧 JPEG，默认仅注入本轮视觉请求，不带入后续对话历史
 - 支持在一次请求中同时处理多个 GIF
 - 支持将 GIF 说明注入到 `extra_user_content`、`prompt` 或 `system_prompt`
 - 抽帧输出到临时 JPEG，不覆盖原始 GIF，并自动清理插件生成的临时文件
 
 ## 配置说明
 
-插件通过 `_conf_schema.json` 暴露三组配置：
+插件通过 `_conf_schema.json` 暴露四组配置：
 
 - `sampling_policy`：抽帧数量、缩放尺寸、JPEG 质量、大文件降档阈值
 - `hint_policy`：提示注入开关、注入位置、提示模板
+- `history_policy`：是否将插件生成的 GIF 抽帧写入会话历史
 - `cleanup_policy`：临时文件保留时长
 
 默认抽帧策略基本保持和旧版本一致：
@@ -37,6 +38,8 @@
 - 文件体积超过 `5 MB` 或 `10 MB` 时会自动减少抽帧数
 
 实际展开帧数会同时受 GIF 实际总帧数、`max_sampled_frames` 和大文件降档策略影响。例如希望总帧数 `> 16` 的 GIF 抽 `20` 帧时，需要同时设置 `frames_when_total_gt_16 = 20` 且 `max_sampled_frames >= 20`。
+
+默认情况下，插件生成的 GIF 抽帧只会参与当前这一次模型请求，不会保存到会话历史，也不会带到下一轮上下文。如果需要恢复旧行为，可以打开 `history_policy.persist_sampled_frames_to_history`。
 
 ## 安装方式
 

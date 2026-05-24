@@ -1,6 +1,6 @@
 name: astrbot_plugin_gif_frame_vision
 display_name: GIF Frame Vision
-version: 0.7.5
+version: 0.7.6
 author: YanL, Whereis-Alice
 desc: "\u5c06 GIF \u52a8\u56fe\u62bd\u5e27\u4e3a\u9759\u6001\u56fe\uff0c\u589e\u5f3a\u591a\u6a21\u6001\u89c6\u89c9\u7406\u89e3"
 short_desc: "GIF \u62bd\u5e27\u589e\u5f3a\u591a\u6a21\u6001\u8bc6\u522b"
